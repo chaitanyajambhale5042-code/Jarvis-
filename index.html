@@ -77,18 +77,24 @@ input[type=text],input[type=password],select{font:inherit;color:var(--fg);backgr
 <div id="settings" hidden>
   <form class="card" id="form">
     <h2>SETTINGS</h2>
-    <label>Anthropic API key
-      <input id="key" type="password" autocomplete="off" placeholder="sk-ant-...">
+    <label>AI provider
+      <select id="provider">
+        <option value="gemini">Google Gemini (free key)</option>
+        <option value="claude">Anthropic Claude (paid key)</option>
+      </select>
     </label>
-    <p class="hint">Stored only on this tablet. Needed for open-ended questions; built-in commands work without it.</p>
+    <label>API key
+      <input id="key" type="password" autocomplete="off" placeholder="Paste key here">
+    </label>
+    <p class="hint">Free Gemini key: aistudio.google.com/apikey. Stored only on this tablet. Needed for open-ended questions; built-in commands work without it.</p>
     <label>Your name for me to use
       <input id="you" type="text" placeholder="sir">
     </label>
     <label>Voice
       <select id="voice"></select>
     </label>
-    <label>Model
-      <input id="model" type="text" placeholder="claude-sonnet-5-5">
+    <label>Model (leave blank for default)
+      <input id="model" type="text" placeholder="gemini-2.5-flash">
     </label>
     <label>Contacts (one per line, "Name: number or email")
       <textarea id="contacts" rows="5" placeholder="Mom: 9876543210&#10;Rahul: +919812345678&#10;Boss: boss@example.com"></textarea>
@@ -113,8 +119,8 @@ input[type=text],input[type=password],select{font:inherit;color:var(--fg);backgr
   };
   const cfg = {
     key: store.get("j_key"), name: store.get("j_name", "sir"), voice: store.get("j_voice"),
-    model: store.get("j_model", "claude-sonnet-5-5"), wake: store.get("j_wake", "1") === "1",
-    contacts: store.get("j_contacts")
+    model: store.get("j_model", ""), wake: store.get("j_wake", "1") === "1",
+    contacts: store.get("j_contacts"), provider: store.get("j_provider", "gemini")
   };
   function findContact(name) {
     const n = name.toLowerCase().trim();
@@ -340,116 +346,4 @@ input[type=text],input[type=password],select{font:inherit;color:var(--fg);backgr
     return null;
   }
 
-  // ---------- Claude ----------
-  const SYSTEM_PROMPT = () => `You are JARVIS, a calm, dry-witted voice assistant running on the user's Samsung Galaxy Tab A9+. Address the user as "${cfg.name}". Your replies are spoken aloud, so answer in one to three short sentences of plain speech: no markdown, no lists, no emoji, no URLs read out. If a task needs the tablet to take an action you cannot perform (the built-in commands cover opening apps, timers, search, directions, time, date, battery, and drafting WhatsApp, SMS or email messages with the phrase "send a message to NAME saying ...", which the user then taps send on), say so briefly and tell them the exact phrase to say. Current local time: ${new Date().toLocaleString()}.`;
-
-  async function ask(text) {
-    if (!cfg.key) return "I need an Anthropic API key for that. Open settings and paste it in.";
-    history.push({ role: "user", content: text });
-    while (history.length > 20) history.shift();
-    try {
-      const r = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: {
-          "content-type": "application/json", "x-api-key": cfg.key, "anthropic-version": "2023-06-01",
-          "anthropic-dangerous-direct-browser-access": "true"
-        },
-        body: JSON.stringify({ model: cfg.model || "claude-sonnet-5-5", max_tokens: 400, system: SYSTEM_PROMPT(), messages: history })
-      });
-      const j = await r.json();
-      if (!r.ok) { history.pop(); return r.status === 401 ? "That API key was rejected. Check it in settings." : `The service returned an error: ${j.error?.message || r.status}.`; }
-      const out = (j.content || []).filter(b => b.type === "text").map(b => b.text).join(" ").replace(/[*_`#]/g, "").trim() || "I have nothing to add.";
-      history.push({ role: "assistant", content: out });
-      return out;
-    } catch { history.pop(); return "I can't reach the network right now."; }
-  }
-
-  async function handle(text) {
-    if (busy) return;
-    busy = true; stopListening(); setState("thinking");
-    addMsg("You", text); caption(text);
-    let res = null;
-    try { res = await local(text); } catch {}
-    const reply = res ? res.reply : await ask(text);
-    busy = false;
-    if (res?.href) { try { location.href = res.href; } catch {} }
-    await say(reply, res?.href);
-  }
-
-  // ---------- UI wiring ----------
-  function tapTalk() {
-    if (state === "speaking") { speechSynthesis.cancel(); setState("idle"); return; }
-    if (listening) { stopListening(); setState("idle"); return; }
-    startListening();
-  }
-  $("mic").onclick = tapTalk;
-  $("orb").onclick = tapTalk;
-  $("always").onclick = () => { always = !always; syncAlways(); if (always) startListening(); else stopListening(); };
-  $("openSettings").onclick = () => { $("key").value = cfg.key; $("you").value = cfg.name; $("model").value = cfg.model; $("contacts").value = cfg.contacts; $("wakeOn").checked = cfg.wake; $("voice").value = cfg.voice; $("settings").hidden = false; };
-  $("form").onsubmit = e => {
-    e.preventDefault();
-    cfg.key = $("key").value.trim(); cfg.name = $("you").value.trim() || "sir"; cfg.model = $("model").value.trim() || "claude-sonnet-5-5";
-    cfg.wake = $("wakeOn").checked; cfg.voice = $("voice").value; cfg.contacts = $("contacts").value.trim(); store.set("j_contacts", cfg.contacts);
-    store.set("j_key", cfg.key); store.set("j_name", cfg.name); store.set("j_model", cfg.model); store.set("j_wake", cfg.wake ? "1" : "0"); store.set("j_voice", cfg.voice);
-    $("settings").hidden = true;
-  };
-  if (navigator.contacts && navigator.contacts.select) {
-    $("pick").hidden = false;
-    $("pick").onclick = async () => {
-      try {
-        const list = await navigator.contacts.select(["name", "tel"], { multiple: true });
-        const lines = list.filter(c => c.name?.[0] && c.tel?.[0]).map(c => `${c.name[0]}: ${c.tel[0].replace(/[\s()-]/g, "")}`);
-        const box = $("contacts"); box.value = (box.value.trim() + "\n" + lines.join("\n")).trim();
-      } catch {}
-    };
-  }
-  $("clear").onclick = () => { history.length = 0; $("log").innerHTML = '<div class="empty">Conversation cleared.</div>'; };
-  $("settings").onclick = e => { if (e.target === $("settings")) $("settings").hidden = true; };
-  addEventListener("keydown", e => { if (e.key === "Escape") $("settings").hidden = true; });
-
-  // keep screen awake while open
-  let wl = null;
-  async function wake() { try { wl = await navigator.wakeLock?.request("screen"); } catch {} }
-  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") wake(); });
-  wake();
-
-  if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
-
-  // ---------- orb ----------
-  const cv = $("orb"), g = cv.getContext("2d");
-  const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
-  let amp = 0, t0 = 0;
-  function frame(ts) {
-    const t = ts / 1000, W = cv.width, c = W / 2;
-    const target = { idle: .12, listening: .55, thinking: .35, speaking: .8 }[state];
-    amp += (target - amp) * .06;
-    const col = state === "thinking" ? "255,179,71" : state === "listening" ? "53,224,255" : "53,224,255";
-    g.clearRect(0, 0, W, W);
-    const glow = g.createRadialGradient(c, c, W * .05, c, c, W * .5);
-    glow.addColorStop(0, `rgba(${col},${.25 + amp * .3})`); glow.addColorStop(1, `rgba(${col},0)`);
-    g.fillStyle = glow; g.fillRect(0, 0, W, W);
-    const speed = reduce ? 0 : (state === "thinking" ? 2.2 : 0.5);
-    for (let i = 0; i < 4; i++) {
-      const r = W * (.16 + i * .07) + Math.sin(t * 2 + i) * W * .012 * (1 + amp * 3);
-      g.beginPath(); g.lineWidth = 3 - i * .4; g.strokeStyle = `rgba(${col},${.9 - i * .17})`;
-      const rot = t * speed * (i % 2 ? -1 : 1) + i, seg = 6 + i * 3;
-      for (let k = 0; k < seg; k++) { const a0 = rot + k * (Math.PI * 2 / seg), a1 = a0 + (Math.PI * 2 / seg) * .62; g.moveTo(c + Math.cos(a0) * r, c + Math.sin(a0) * r); g.arc(c, c, r, a0, a1); }
-      g.stroke();
-    }
-    // waveform ring
-    g.beginPath(); g.lineWidth = 2; g.strokeStyle = `rgba(${col},.85)`;
-    const N = 120, base = W * .39;
-    for (let i = 0; i <= N; i++) {
-      const a = i / N * Math.PI * 2, wob = reduce ? 0 : Math.sin(a * 7 + t * 4) * Math.sin(a * 3 - t * 2.5) * W * .035 * amp;
-      const x = c + Math.cos(a) * (base + wob), y = c + Math.sin(a) * (base + wob);
-      i ? g.lineTo(x, y) : g.moveTo(x, y);
-    }
-    g.stroke();
-    g.beginPath(); g.arc(c, c, W * (.07 + amp * .02), 0, 7); g.fillStyle = `rgba(${col},${.5 + amp * .4})`; g.fill();
-    requestAnimationFrame(frame);
-  }
-  requestAnimationFrame(frame);
-})();
-</script>
-</body>
-</html>
+  
