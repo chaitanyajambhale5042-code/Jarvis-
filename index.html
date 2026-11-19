@@ -1,0 +1,455 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#050b12">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<title>Jarvis</title>
+<style>
+/* Layout: orb stage on the left, conversation log on the right (stacks on narrow screens) */
+:root{
+  --bg:#050b12; --panel:#0a1622; --line:#15303f; --fg:#d7eef7; --dim:#6f95a6;
+  --cyan:#35e0ff; --amber:#ffb347; --red:#ff5d6c;
+  --display:"Orbitron","Segoe UI",system-ui,sans-serif; --body:"Rajdhani","Segoe UI",system-ui,sans-serif;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:radial-gradient(1200px 700px at 30% 40%,#0a2233 0%,var(--bg) 60%);color:var(--fg);font-family:var(--body);font-size:18px;overflow:hidden;
+  padding:max(12px,env(safe-area-inset-top)) max(16px,env(safe-area-inset-right)) max(12px,env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-left));
+  display:flex;flex-direction:column;gap:10px}
+header{display:flex;align-items:center;justify-content:space-between;gap:12px}
+h1{font-family:var(--display);font-size:20px;letter-spacing:.35em;margin:0;color:var(--cyan);font-weight:600}
+#status{font-size:14px;letter-spacing:.2em;text-transform:uppercase;color:var(--dim)}
+button{font:inherit;color:var(--fg);background:transparent;border:1px solid var(--line);border-radius:10px;padding:8px 14px;cursor:pointer}
+button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+main{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);gap:16px}
+.stage{position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:0;gap:10px}
+canvas{width:min(100%,62vh);aspect-ratio:1;max-height:100%;cursor:pointer;touch-action:manipulation}
+#caption{min-height:3.2em;max-width:46ch;text-align:center;font-size:22px;line-height:1.3;color:var(--fg);text-wrap:balance}
+#caption.interim{color:var(--dim)}
+.controls{display:flex;gap:10px;flex-wrap:wrap;justify-content:center}
+#mic{border-color:var(--cyan);color:var(--cyan);font-family:var(--display);letter-spacing:.2em;font-size:14px;padding:12px 22px}
+#mic[aria-pressed="true"]{background:rgba(53,224,255,.12)}
+.log{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px;overflow:auto;min-height:0;display:flex;flex-direction:column;gap:12px}
+.msg{max-width:100%;line-height:1.35;overflow-wrap:anywhere}
+.msg b{display:block;font-family:var(--display);font-size:11px;letter-spacing:.25em;color:var(--dim);font-weight:500;margin-bottom:2px}
+.msg.you b{color:var(--amber)} .msg.jarvis b{color:var(--cyan)}
+.chip{display:inline-block;margin-top:6px;border-color:var(--amber);color:var(--amber);text-decoration:none;border:1px solid var(--amber);border-radius:10px;padding:6px 12px}
+.empty{color:var(--dim)}
+#settings{position:fixed;inset:0;background:rgba(0,0,0,.65);display:flex;align-items:center;justify-content:center;padding:16px;z-index:5}
+#settings[hidden]{display:none}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:20px;width:min(520px,100%);max-height:100%;overflow:auto;display:flex;flex-direction:column;gap:12px}
+.card h2{margin:0;font-family:var(--display);font-size:15px;letter-spacing:.25em;color:var(--cyan);font-weight:500}
+label{display:flex;flex-direction:column;gap:4px;font-size:14px;color:var(--dim)}
+label.row{flex-direction:row;align-items:center;gap:10px;color:var(--fg);font-size:17px}
+textarea{font:inherit;color:var(--fg);background:#06101a;border:1px solid var(--line);border-radius:8px;padding:10px;width:100%;resize:vertical}
+input[type=text],input[type=password],select{font:inherit;color:var(--fg);background:#06101a;border:1px solid var(--line);border-radius:8px;padding:10px;width:100%}
+.hint{font-size:14px;color:var(--dim);margin:0}
+@media (max-width:760px){
+  main{grid-template-columns:1fr;grid-template-rows:minmax(0,1.2fr) minmax(0,1fr)}
+  canvas{width:min(70vw,38vh)}
+}
+@media (prefers-reduced-motion:reduce){*{scroll-behavior:auto}}
+</style>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;600&family=Rajdhani:wght@400;600&display=swap">
+</head>
+<body>
+<header>
+  <h1>JARVIS</h1>
+  <span id="status" role="status" aria-live="polite">Standing by</span>
+  <button id="openSettings" aria-label="Settings">Settings</button>
+</header>
+<main>
+  <section class="stage">
+    <canvas id="orb" width="900" height="900" aria-label="Tap to talk"></canvas>
+    <div id="caption">Tap the orb and say something.</div>
+    <div class="controls">
+      <button id="mic" aria-pressed="false">TAP TO TALK</button>
+      <button id="always" aria-pressed="false">ALWAYS LISTEN: OFF</button>
+    </div>
+  </section>
+  <section class="log" id="log" aria-live="polite"><div class="empty">Try: "What time is it?", "Open YouTube", "Set a timer for 5 minutes", or ask anything.</div></section>
+</main>
+
+<div id="settings" hidden>
+  <form class="card" id="form">
+    <h2>SETTINGS</h2>
+    <label>Anthropic API key
+      <input id="key" type="password" autocomplete="off" placeholder="sk-ant-...">
+    </label>
+    <p class="hint">Stored only on this tablet. Needed for open-ended questions; built-in commands work without it.</p>
+    <label>Your name for me to use
+      <input id="you" type="text" placeholder="sir">
+    </label>
+    <label>Voice
+      <select id="voice"></select>
+    </label>
+    <label>Model
+      <input id="model" type="text" placeholder="claude-sonnet-5-5">
+    </label>
+    <label>Contacts (one per line, "Name: number or email")
+      <textarea id="contacts" rows="5" placeholder="Mom: 9876543210&#10;Rahul: +919812345678&#10;Boss: boss@example.com"></textarea>
+    </label>
+    <button type="button" id="pick" hidden>Import from phone contacts</button>
+    <p class="hint">10-digit numbers are treated as +91. Add a country code for others.</p>
+    <label class="row"><input id="wakeOn" type="checkbox"> Require the wake word in always-listen mode ("Jarvis, ...")</label>
+    <div class="controls" style="justify-content:flex-end">
+      <button type="button" id="clear">Clear chat</button>
+      <button type="submit" style="border-color:var(--cyan);color:var(--cyan)">Save</button>
+    </div>
+  </form>
+</div>
+
+<script>
+(() => {
+  "use strict";
+  const $ = id => document.getElementById(id);
+  const store = {
+    get(k, d = "") { try { return localStorage.getItem(k) ?? d; } catch { return d; } },
+    set(k, v) { try { localStorage.setItem(k, v); } catch {} }
+  };
+  const cfg = {
+    key: store.get("j_key"), name: store.get("j_name", "sir"), voice: store.get("j_voice"),
+    model: store.get("j_model", "claude-sonnet-5-5"), wake: store.get("j_wake", "1") === "1",
+    contacts: store.get("j_contacts")
+  };
+  function findContact(name) {
+    const n = name.toLowerCase().trim();
+    if (/^[\d\s+()-]{6,}$/.test(n)) return { name, addr: n };
+    const rows = cfg.contacts.split("\n").map(l => l.split(/:(.+)/)).filter(p => p[1]).map(p => ({ name: p[0].trim(), addr: p[1].trim() }));
+    return rows.find(r => r.name.toLowerCase() === n) || rows.find(r => r.name.toLowerCase().includes(n) || n.includes(r.name.toLowerCase())) || null;
+  }
+  function phoneOf(addr) {
+    let d = addr.replace(/[^\d+]/g, "");
+    if (d.startsWith("+")) return d.slice(1);
+    if (d.length === 10) return "91" + d;
+    return d;
+  }
+
+  // ---------- state ----------
+  let state = "idle";            // idle | listening | thinking | speaking
+  let always = false, busy = false;
+  const history = [];            // {role, content}
+  const timers = [];
+
+  const statusText = { idle: "Standing by", listening: "Listening", thinking: "Thinking", speaking: "Speaking" };
+  function setState(s) { state = s; $("status").textContent = statusText[s]; }
+  function caption(t, interim) { const c = $("caption"); c.textContent = t; c.classList.toggle("interim", !!interim); }
+
+  function addMsg(who, text, href) {
+    const log = $("log");
+    log.querySelector(".empty")?.remove();
+    const d = document.createElement("div");
+    d.className = "msg " + (who === "You" ? "you" : "jarvis");
+    const b = document.createElement("b"); b.textContent = who.toUpperCase();
+    const p = document.createElement("span"); p.textContent = text;
+    d.append(b, p);
+    if (href) {
+      const a = document.createElement("a"); a.className = "chip"; a.href = href; a.textContent = "Tap to open";
+      d.append(document.createElement("br"), a);
+    }
+    log.append(d); log.scrollTop = log.scrollHeight;
+  }
+
+  // ---------- speech out ----------
+  let voices = [];
+  function loadVoices() {
+    voices = speechSynthesis.getVoices();
+    const sel = $("voice"); sel.innerHTML = "";
+    const def = document.createElement("option"); def.value = ""; def.textContent = "Automatic (British male if available)"; sel.append(def);
+    voices.filter(v => /^en/i.test(v.lang)).forEach(v => {
+      const o = document.createElement("option"); o.value = v.name; o.textContent = `${v.name} (${v.lang})`; sel.append(o);
+    });
+    sel.value = cfg.voice;
+  }
+  if ("speechSynthesis" in window) { loadVoices(); speechSynthesis.onvoiceschanged = loadVoices; }
+  function pickVoice() {
+    if (cfg.voice) { const v = voices.find(v => v.name === cfg.voice); if (v) return v; }
+    const en = voices.filter(v => /^en/i.test(v.lang));
+    return en.find(v => /en-GB/i.test(v.lang) && /male|daniel|ryan|george/i.test(v.name) && !/female/i.test(v.name))
+        || en.find(v => /en-GB/i.test(v.lang)) || en.find(v => /en-IN/i.test(v.lang)) || en[0] || null;
+  }
+  function speak(text) {
+    return new Promise(res => {
+      if (!("speechSynthesis" in window)) return res();
+      stopListening();
+      speechSynthesis.cancel();
+      const u = new SpeechSynthesisUtterance(text);
+      const v = pickVoice(); if (v) { u.voice = v; u.lang = v.lang; }
+      u.rate = 1.02; u.pitch = 0.9;
+      setState("speaking");
+      let done = false; const fin = () => { if (!done) { done = true; res(); } };
+      u.onend = fin; u.onerror = fin;
+      speechSynthesis.speak(u);
+    });
+  }
+  async function say(text, href) {
+    addMsg("Jarvis", text, href); caption(text);
+    await speak(text);
+    setState("idle");
+    if (always) setTimeout(startListening, 250);
+  }
+
+  // ---------- speech in ----------
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  let rec = null, listening = false;
+  if (!SR) caption("Speech recognition isn't supported in this browser. Open this page in Chrome.");
+  function makeRec() {
+    const r = new SR();
+    r.lang = "en-IN"; r.interimResults = true; r.continuous = false; r.maxAlternatives = 1;
+    r.onstart = () => { listening = true; if (!busy) { setState("listening"); $("mic").setAttribute("aria-pressed", "true"); } };
+    r.onresult = e => {
+      let interim = "", final = "";
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const t = e.results[i][0].transcript;
+        if (e.results[i].isFinal) final += t; else interim += t;
+      }
+      if (interim) caption(interim, true);
+      if (final) onHeard(final.trim());
+    };
+    r.onerror = e => {
+      listening = false;
+      if (e.error === "not-allowed" || e.error === "service-not-allowed") {
+        always = false; syncAlways(); caption("Microphone blocked. Allow it in the site permissions, then tap again.");
+      }
+    };
+    r.onend = () => {
+      listening = false; $("mic").setAttribute("aria-pressed", "false");
+      if (state === "listening") setState("idle");
+      if (always && !busy && state !== "speaking") setTimeout(startListening, 350);
+    };
+    return r;
+  }
+  function startListening() {
+    if (!SR || busy || listening || state === "speaking") return;
+    try { rec = rec || makeRec(); rec.start(); } catch { rec = null; }
+  }
+  function stopListening() { try { rec && rec.abort(); } catch {} listening = false; }
+
+  function syncAlways() {
+    $("always").setAttribute("aria-pressed", String(always));
+    $("always").textContent = "ALWAYS LISTEN: " + (always ? "ON" : "OFF");
+  }
+
+  async function onHeard(text) {
+    let t = text;
+    if (always && cfg.wake) {
+      const m = t.match(/\b(jarvis|jarvish|service|travis)\b[,.!?\s]*(.*)$/i);
+      if (!m) return;                      // ignore chatter without the wake word
+      t = m[2].trim();
+      if (!t) { await say(`Yes, ${cfg.name}?`); return; }
+    }
+    handle(t);
+  }
+
+  // ---------- local commands ----------
+  const APPS = {
+    youtube: ["com.google.android.youtube", "https://www.youtube.com"],
+    whatsapp: ["com.whatsapp", "https://web.whatsapp.com"],
+    chrome: ["com.android.chrome", "https://www.google.com"],
+    spotify: ["com.spotify.music", "https://open.spotify.com"],
+    maps: ["com.google.android.apps.maps", "https://maps.google.com"],
+    gmail: ["com.google.android.gm", "https://mail.google.com"],
+    instagram: ["com.instagram.android", "https://www.instagram.com"],
+    telegram: ["org.telegram.messenger", "https://web.telegram.org"],
+    netflix: ["com.netflix.mediaclient", "https://www.netflix.com"],
+    photos: ["com.google.android.apps.photos", "https://photos.google.com"],
+    "play store": ["com.android.vending", "https://play.google.com"],
+    samsung: ["com.sec.android.app.sbrowser", "https://www.samsung.com"],
+    drive: ["com.google.android.apps.docs", "https://drive.google.com"]
+  };
+  const SYSTEM = {
+    settings: "intent:#Intent;action=android.settings.SETTINGS;end",
+    camera: "intent:#Intent;action=android.media.action.STILL_IMAGE_CAMERA;end",
+    wifi: "intent:#Intent;action=android.settings.WIFI_SETTINGS;end",
+    bluetooth: "intent:#Intent;action=android.settings.BLUETOOTH_SETTINGS;end",
+    alarms: "intent:#Intent;action=android.intent.action.SHOW_ALARMS;end",
+    alarm: "intent:#Intent;action=android.intent.action.SHOW_ALARMS;end"
+  };
+  const intent = (pkg, web) => `intent://#Intent;package=${pkg};S.browser_fallback_url=${encodeURIComponent(web)};end`;
+  const WORDNUM = { a: 1, an: 1, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, fifteen: 15, twenty: 20, thirty: 30, forty: 40, sixty: 60 };
+  const num = s => /^\d+(\.\d+)?$/.test(s) ? parseFloat(s) : (WORDNUM[s] ?? NaN);
+
+  function beep() {
+    try {
+      const ac = new (window.AudioContext || window.webkitAudioContext)();
+      [0, .3, .6].forEach(d => { const o = ac.createOscillator(), g = ac.createGain(); o.frequency.value = 880; o.connect(g); g.connect(ac.destination);
+        g.gain.setValueAtTime(.25, ac.currentTime + d); g.gain.exponentialRampToValueAtTime(.001, ac.currentTime + d + .25); o.start(ac.currentTime + d); o.stop(ac.currentTime + d + .26); });
+    } catch {}
+  }
+
+  async function local(t) {
+    const s = t.toLowerCase().replace(/[.!?,]+$/g, "").trim();
+    let m;
+    if (/^(stop|be quiet|quiet|shut up|cancel)$/.test(s)) { speechSynthesis.cancel(); return { reply: "Of course." }; }
+    if (/^(hi|hello|hey)( jarvis)?$/.test(s)) return { reply: `Hello, ${cfg.name}. How can I help?` };
+    if (/\bwhat('?s| is)? (the )?time\b|\bcurrent time\b|^time$/.test(s))
+      return { reply: `It's ${new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}, ${cfg.name}.` };
+    if (/\b(what('?s| is)? )?(the |today'?s )?(date|day)\b( today)?$/.test(s) && !/timer|alarm/.test(s))
+      return { reply: `Today is ${new Date().toLocaleDateString([], { weekday: "long", day: "numeric", month: "long", year: "numeric" })}.` };
+    if (/\bbattery\b/.test(s)) {
+      try { const b = await navigator.getBattery(); return { reply: `Battery is at ${Math.round(b.level * 100)} percent${b.charging ? " and charging" : ""}.` }; }
+      catch { return { reply: "I can't read the battery from this browser." }; }
+    }
+    if ((m = s.match(/(?:set|start|create)?\s*(?:a |an )?timer (?:for )?(\w+)\s*(second|minute|min|hour)s?/))) {
+      const n = num(m[1]); if (!isNaN(n)) {
+        const ms = n * (m[2].startsWith("sec") ? 1e3 : m[2].startsWith("h") ? 36e5 : 6e4);
+        timers.push(setTimeout(async () => { beep(); await say(`${cfg.name}, your ${n} ${m[2]} timer is done.`); }, ms));
+        return { reply: `Timer set for ${n} ${m[2]}${n === 1 ? "" : "s"}.` };
+      }
+    }
+    if (/cancel (all )?timers?|clear timers?/.test(s)) { timers.splice(0).forEach(clearTimeout); return { reply: "All timers cancelled." }; }
+    const clean = t.replace(/[.!?]+$/g, "").trim();
+    if ((m = clean.match(/^(?:please\s+)?(?:send|write|text|message|whatsapp|sms|email|mail)\s+(?:an?\s+)?(?:(?:whatsapp|sms|text|email|mail)\s+)?(?:message\s+|msg\s+)?(?:to\s+)?(.+?)\s+(?:saying(?: that)?|that says|to say|says)\s+(.+)$/i))) {
+      const verb = (clean.match(/^(?:please\s+)?(\w+)/i) || [])[1].toLowerCase();
+      let who = m[1], body = m[2].trim();
+      let ch = /whatsapp/i.test(clean.slice(0, clean.length - body.length)) ? "wa" : /\b(sms|text)\b/i.test(clean.slice(0, clean.length - body.length)) ? "sms" : /\b(e-?mail|mail)\b/i.test(clean.slice(0, clean.length - body.length)) ? "mail" : (verb === "text" || verb === "sms") ? "sms" : (verb === "email" || verb === "mail") ? "mail" : "wa";
+      who = who.replace(/\s+(?:on|via|by|using)\s+(?:whatsapp|sms|text|email)$/i, "").trim();
+      const c = findContact(who);
+      if (!c) return { reply: `I don't have ${who} in your contacts. Add them in settings, ${cfg.name}.` };
+      const first = c.name.split(" ")[0];
+      if (ch === "mail" || c.addr.includes("@")) {
+        if (!c.addr.includes("@")) return { reply: `${first} has no email address saved.` };
+        return { reply: `Email to ${first} is ready. Tap send.`, href: `mailto:${c.addr}?body=${encodeURIComponent(body)}` };
+      }
+      const ph = phoneOf(c.addr);
+      if (ch === "sms") return { reply: `Text to ${first} is ready. Tap send.`, href: `sms:+${ph}?body=${encodeURIComponent(body)}` };
+      return { reply: `WhatsApp message to ${first} is ready. Tap send.`, href: `https://wa.me/${ph}?text=${encodeURIComponent(body)}` };
+    }
+    if ((m = s.match(/^(?:open|launch|start)\s+(.+)$/))) {
+      const name = m[1].replace(/^the\s+|\s+app$/g, "").trim();
+      if (SYSTEM[name]) return { reply: `Opening ${name}.`, href: SYSTEM[name] };
+      const key = Object.keys(APPS).find(k => name === k || name.includes(k));
+      if (key) return { reply: `Opening ${key}.`, href: intent(...APPS[key]) };
+      if (/\.\w{2,}$/.test(name)) return { reply: `Opening ${name}.`, href: "https://" + name.replace(/\s+/g, "") };
+    }
+    if ((m = s.match(/^(?:search|google|look up)\s+(?:for\s+)?(.+)$/))) return { reply: `Searching for ${m[1]}.`, href: "https://www.google.com/search?q=" + encodeURIComponent(m[1]) };
+    if ((m = s.match(/^play\s+(.+?)(?:\s+on youtube)?$/))) return { reply: `Playing ${m[1]} on YouTube.`, href: "https://www.youtube.com/results?search_query=" + encodeURIComponent(m[1]) };
+    if ((m = s.match(/^(?:navigate|directions?|take me) to\s+(.+)$/))) return { reply: `Getting directions to ${m[1]}.`, href: "https://www.google.com/maps/dir/?api=1&destination=" + encodeURIComponent(m[1]) };
+    if ((m = clean.match(/^(?:please\s+)?(?:call|dial|phone|ring)\s+(.+)$/i))) {
+      const c = findContact(m[1].trim());
+      if (c && !c.addr.includes("@")) {
+        const first = c.name.split(" ")[0];
+        return { reply: `Dialer is ready with ${first}'s number. Tap the call button.`, href: "tel:+" + phoneOf(c.addr) };
+      }
+    }
+    if (/^(clear|reset) (chat|conversation|memory)$/.test(s)) { history.length = 0; return { reply: "Conversation cleared." }; }
+    return null;
+  }
+
+  // ---------- Claude ----------
+  const SYSTEM_PROMPT = () => `You are JARVIS, a calm, dry-witted voice assistant running on the user's Samsung Galaxy Tab A9+. Address the user as "${cfg.name}". Your replies are spoken aloud, so answer in one to three short sentences of plain speech: no markdown, no lists, no emoji, no URLs read out. If a task needs the tablet to take an action you cannot perform (the built-in commands cover opening apps, timers, search, directions, time, date, battery, and drafting WhatsApp, SMS or email messages with the phrase "send a message to NAME saying ...", which the user then taps send on), say so briefly and tell them the exact phrase to say. Current local time: ${new Date().toLocaleString()}.`;
+
+  async function ask(text) {
+    if (!cfg.key) return "I need an Anthropic API key for that. Open settings and paste it in.";
+    history.push({ role: "user", content: text });
+    while (history.length > 20) history.shift();
+    try {
+      const r = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json", "x-api-key": cfg.key, "anthropic-version": "2023-06-01",
+          "anthropic-dangerous-direct-browser-access": "true"
+        },
+        body: JSON.stringify({ model: cfg.model || "claude-sonnet-5-5", max_tokens: 400, system: SYSTEM_PROMPT(), messages: history })
+      });
+      const j = await r.json();
+      if (!r.ok) { history.pop(); return r.status === 401 ? "That API key was rejected. Check it in settings." : `The service returned an error: ${j.error?.message || r.status}.`; }
+      const out = (j.content || []).filter(b => b.type === "text").map(b => b.text).join(" ").replace(/[*_`#]/g, "").trim() || "I have nothing to add.";
+      history.push({ role: "assistant", content: out });
+      return out;
+    } catch { history.pop(); return "I can't reach the network right now."; }
+  }
+
+  async function handle(text) {
+    if (busy) return;
+    busy = true; stopListening(); setState("thinking");
+    addMsg("You", text); caption(text);
+    let res = null;
+    try { res = await local(text); } catch {}
+    const reply = res ? res.reply : await ask(text);
+    busy = false;
+    if (res?.href) { try { location.href = res.href; } catch {} }
+    await say(reply, res?.href);
+  }
+
+  // ---------- UI wiring ----------
+  function tapTalk() {
+    if (state === "speaking") { speechSynthesis.cancel(); setState("idle"); return; }
+    if (listening) { stopListening(); setState("idle"); return; }
+    startListening();
+  }
+  $("mic").onclick = tapTalk;
+  $("orb").onclick = tapTalk;
+  $("always").onclick = () => { always = !always; syncAlways(); if (always) startListening(); else stopListening(); };
+  $("openSettings").onclick = () => { $("key").value = cfg.key; $("you").value = cfg.name; $("model").value = cfg.model; $("contacts").value = cfg.contacts; $("wakeOn").checked = cfg.wake; $("voice").value = cfg.voice; $("settings").hidden = false; };
+  $("form").onsubmit = e => {
+    e.preventDefault();
+    cfg.key = $("key").value.trim(); cfg.name = $("you").value.trim() || "sir"; cfg.model = $("model").value.trim() || "claude-sonnet-5-5";
+    cfg.wake = $("wakeOn").checked; cfg.voice = $("voice").value; cfg.contacts = $("contacts").value.trim(); store.set("j_contacts", cfg.contacts);
+    store.set("j_key", cfg.key); store.set("j_name", cfg.name); store.set("j_model", cfg.model); store.set("j_wake", cfg.wake ? "1" : "0"); store.set("j_voice", cfg.voice);
+    $("settings").hidden = true;
+  };
+  if (navigator.contacts && navigator.contacts.select) {
+    $("pick").hidden = false;
+    $("pick").onclick = async () => {
+      try {
+        const list = await navigator.contacts.select(["name", "tel"], { multiple: true });
+        const lines = list.filter(c => c.name?.[0] && c.tel?.[0]).map(c => `${c.name[0]}: ${c.tel[0].replace(/[\s()-]/g, "")}`);
+        const box = $("contacts"); box.value = (box.value.trim() + "\n" + lines.join("\n")).trim();
+      } catch {}
+    };
+  }
+  $("clear").onclick = () => { history.length = 0; $("log").innerHTML = '<div class="empty">Conversation cleared.</div>'; };
+  $("settings").onclick = e => { if (e.target === $("settings")) $("settings").hidden = true; };
+  addEventListener("keydown", e => { if (e.key === "Escape") $("settings").hidden = true; });
+
+  // keep screen awake while open
+  let wl = null;
+  async function wake() { try { wl = await navigator.wakeLock?.request("screen"); } catch {} }
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") wake(); });
+  wake();
+
+  if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
+
+  // ---------- orb ----------
+  const cv = $("orb"), g = cv.getContext("2d");
+  const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  let amp = 0, t0 = 0;
+  function frame(ts) {
+    const t = ts / 1000, W = cv.width, c = W / 2;
+    const target = { idle: .12, listening: .55, thinking: .35, speaking: .8 }[state];
+    amp += (target - amp) * .06;
+    const col = state === "thinking" ? "255,179,71" : state === "listening" ? "53,224,255" : "53,224,255";
+    g.clearRect(0, 0, W, W);
+    const glow = g.createRadialGradient(c, c, W * .05, c, c, W * .5);
+    glow.addColorStop(0, `rgba(${col},${.25 + amp * .3})`); glow.addColorStop(1, `rgba(${col},0)`);
+    g.fillStyle = glow; g.fillRect(0, 0, W, W);
+    const speed = reduce ? 0 : (state === "thinking" ? 2.2 : 0.5);
+    for (let i = 0; i < 4; i++) {
+      const r = W * (.16 + i * .07) + Math.sin(t * 2 + i) * W * .012 * (1 + amp * 3);
+      g.beginPath(); g.lineWidth = 3 - i * .4; g.strokeStyle = `rgba(${col},${.9 - i * .17})`;
+      const rot = t * speed * (i % 2 ? -1 : 1) + i, seg = 6 + i * 3;
+      for (let k = 0; k < seg; k++) { const a0 = rot + k * (Math.PI * 2 / seg), a1 = a0 + (Math.PI * 2 / seg) * .62; g.moveTo(c + Math.cos(a0) * r, c + Math.sin(a0) * r); g.arc(c, c, r, a0, a1); }
+      g.stroke();
+    }
+    // waveform ring
+    g.beginPath(); g.lineWidth = 2; g.strokeStyle = `rgba(${col},.85)`;
+    const N = 120, base = W * .39;
+    for (let i = 0; i <= N; i++) {
+      const a = i / N * Math.PI * 2, wob = reduce ? 0 : Math.sin(a * 7 + t * 4) * Math.sin(a * 3 - t * 2.5) * W * .035 * amp;
+      const x = c + Math.cos(a) * (base + wob), y = c + Math.sin(a) * (base + wob);
+      i ? g.lineTo(x, y) : g.moveTo(x, y);
+    }
+    g.stroke();
+    g.beginPath(); g.arc(c, c, W * (.07 + amp * .02), 0, 7); g.fillStyle = `rgba(${col},${.5 + amp * .4})`; g.fill();
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
